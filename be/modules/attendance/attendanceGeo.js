@@ -1,34 +1,30 @@
 const repo = require("./attendanceRepo");
 
-exports.validate = async (req)=>{
-  const lat = parseFloat(req.body.latitude);
-  const lng = parseFloat(req.body.longitude);
+exports.checkLocation = async (companyId, lat, lng) => {
+  console.log("CHECK GEO:", {
+  companyId,
+  lat,
+  lng
+});
 
-  // cek NaN
-  if(isNaN(lat) || isNaN(lng)) return false;
+  if (isNaN(lat) || isNaN(lng)) throw "Invalid coordinates";
 
-  const office = await repo.getOffice(req.user.company_id);
-  if(!office) return false;
+  const office = await repo.getOffice(companyId);
+  if (!office) throw "Office not found";
 
-  // ===== DEBUG LOG DI SINI =====
-  console.log("User lat/lng:", lat, lng);
-  console.log("Office lat/lng/radius:", office.latitude, office.longitude, office.radius);
+  const dist = haversine(lat, lng, office.latitude, office.longitude);
 
-  const distance = haversine(lat,lng,office.latitude, office.longitude);
-
-  // ===== DEBUG LOG JUGA DI SINI =====
-  console.log("Distance (m):", distance, "Radius (m):", office.radius*1000);
-
-  return distance <= (office.radius*1000); // office.radius sekarang dalam km
+  return { office, dist, inside: dist <= office.radius * 1000 };
 };
 
 function haversine(lat1, lon1, lat2, lon2) {
-  const R = 6371000; // meter
+  const R = 6371000;
   const toRad = x => x * Math.PI / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat/2)**2 +
-            Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  const a =
+    Math.sin(dLat/2)**2 +
+    Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R*c;
+  return R * c;
 }
