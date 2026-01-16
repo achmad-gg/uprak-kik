@@ -3,15 +3,11 @@ const jwt = require('jsonwebtoken');
 const users = require('../users/usersRepo');
 
 exports.register = async (req, res) => {
-  const { name, email, password, company_id } = req.body; 
-
-  if (!company_id) {
-    return res.status(400).send({ success: false, message: "company_id is required" });
-  }
+  const { name, email, password, company_id, role } = req.body; 
 
   try {
-    await users.create(name, email, password, company_id);
-    res.send({ success: true });
+    await users.create(name, email, password, company_id, role);
+    res.send({ success: true, message: `User registered as ${role || 'intern'}` });
   } catch (error) {
     console.error(error);
     res.status(500).send({ success: false, message: error.message });
