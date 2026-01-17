@@ -3,7 +3,6 @@ const svc = require('./authService');
 const authMiddleware = require('../../middleware/authMiddleware');
 const upload = require('../../middleware/uploadProfile');
 
-router.post('/register', svc.register);
 router.post('/login', svc.login);
 
 router.get('/me', authMiddleware, svc.me);

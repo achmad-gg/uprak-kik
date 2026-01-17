@@ -9,7 +9,7 @@ exports.daily = async () => {
   FROM attendances
   GROUP BY date
   ORDER BY date DESC
- `
+ `,
     )
     .then((r) => r.rows);
 };
@@ -24,7 +24,7 @@ exports.risky = async () => {
   JOIN users u ON u.id = a.user_id
   WHERE a.risk_flag > 0
   ORDER BY a.date DESC, a.risk_flag DESC
- `
+ `,
     )
     .then((r) => r.rows);
 };
@@ -42,7 +42,7 @@ exports.timeline = async (id) => {
   WHERE a.user_id=$1
   ORDER BY a.date DESC, p.type
  `,
-      [id]
+      [id],
     )
     .then((r) => r.rows);
 };
@@ -55,7 +55,7 @@ exports.dailyByDate = (date) => {
   FROM attendances a
   JOIN users u ON u.id = a.user_id
   WHERE a.date=$1`,
-      [date]
+      [date],
     )
     .then((r) => r.rows);
 };

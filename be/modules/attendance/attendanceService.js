@@ -4,24 +4,43 @@ const geo = require("./attendanceGeo");
 exports.checkIn = async (req, res) => {
   if (!req.file) return res.status(400).send("Selfie required");
 
-  const lat = parseFloat(req.body.latitude);
-  const lng = parseFloat(req.body.longitude);
-  const screen = req.headers["x-screen"];
+  const lat = Number(req.body.latitude);
+  const lng = Number(req.body.longitude);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).send("Invalid coordinates");
+  }
+
+  const office = await getOffice(req.user.company_id);
+  if (!office || !office.active) {
+    return res.status(400).send("Office not configured");
+  }
+
+  const screen = req.headers["x-screen"] || null;
   const ip = req.ip;
-  const ua = req.headers["user-agent"];
+  const ua = req.headers["user-agent"] || null;
 
   const { inside } = await geo.checkLocation(req.user.company_id, lat, lng);
+
   if (!inside) return res.status(403).send("Outside geofence");
 
-  await attendanceRepo.processCheckIn(
-    req.user,
-    lat,
-    lng,
-    screen,
-    ip,
-    ua,
-    req.file.path
-  );
+  try {
+    await attendanceRepo.processCheckIn(
+      req.user,
+      office,
+      lat,
+      lng,
+      screen,
+      ip,
+      ua,
+      req.file.path,
+    );
+  } catch (e) {
+    if (e.code === "23505") {
+      return res.status(409).send("Already checked in today");
+    }
+    throw e;
+  }
 
   res.send({ success: true });
 };
@@ -52,7 +71,7 @@ exports.checkOut = async (req, res) => {
     screen,
     ip,
     ua,
-    req.file.path
+    req.file.path,
   );
 
   res.send({ success: true });
