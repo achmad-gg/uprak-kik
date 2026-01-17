@@ -1,8 +1,11 @@
 const express = require('express');
 const morgan = require('morgan');
 const rateLimit = require('./middleware/rateLimitMiddleware');
+const cors = require('cors');
+const path = require('path')
 
 const app = express();
+app.use(cors());
 
 app.use(express.json());
 app.use(morgan('dev'));
@@ -12,5 +15,6 @@ app.use('/api/auth', require('./modules/auth/authRoutes'));
 app.use('/api/attendance', require('./modules/attendance/attendanceRoutes'));
 app.use('/api/audit', require('./modules/audit/auditRoutes'));
 app.use('/api/export', require('./modules/export/exportRoutes'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 
 module.exports = app;
