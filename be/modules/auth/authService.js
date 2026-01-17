@@ -1,18 +1,6 @@
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const users = require('../users/usersRepo');
-
-exports.register = async (req, res) => {
-  const { name, email, password, company_id, role } = req.body; 
-
-  try {
-    await users.create(name, email, password, company_id, role);
-    res.send({ success: true, message: `User registered as ${role || 'intern'}` });
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ success: false, message: error.message });
-  }
-};
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const users = require("../users/usersRepo");
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
@@ -22,7 +10,16 @@ exports.login = async (req, res) => {
 
   const token = jwt.sign(
     { id: user.id, role: user.role, company_id: user.company_id },
-    process.env.JWT_SECRET, { expiresIn: '12h' }
+    process.env.JWT_SECRET,
+    { expiresIn: "12h" }
   );
-  res.send({ token });
+  res.send({
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      company_id: user.company_id,
+    },
+  });
 };
