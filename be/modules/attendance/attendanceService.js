@@ -76,3 +76,11 @@ exports.checkOut = async (req, res) => {
 
   res.send({ success: true });
 };
+
+exports.getMyHistory = async (userId) => {
+  return await attendanceRepo.getUserHistory(userId);
+};
+
+exports.getMyAttendanceDetail = async (userId, date) => {
+  return await attendanceRepo.getUserAttendanceDetail(userId, date);
+};

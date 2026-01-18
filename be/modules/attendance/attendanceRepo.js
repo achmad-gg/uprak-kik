@@ -129,3 +129,47 @@ exports.processCheckOut = async (user, lat, lng, screen, ip, ua, photo) => {
     client.release();
   }
 };
+
+// Mengambil riwayat kehadiran pengguna
+exports.getUserHistory = async (userId) => {
+  const r = await db.query(
+    `
+    SELECT
+      a.date,
+      a.check_in,
+      a.check_out,
+      a.status,
+      a.risk_flag
+    FROM attendances a
+    WHERE a.user_id = $1
+    ORDER BY a.date DESC
+    LIMIT 30
+    `,
+    [userId],
+  );
+  return r.rows;
+};
+
+// Mengambil detail kehadiran pengguna pada tanggal tertentu
+exports.getUserAttendanceDetail = async (userId, date) => {
+  const r = await db.query(
+    `
+    SELECT
+      a.date,
+      a.check_in,
+      a.check_out,
+      a.status,
+      a.risk_flag,
+      p.type,
+      p.photo_path
+    FROM attendances a
+    LEFT JOIN attendance_photos p
+      ON p.attendance_id = a.id
+    WHERE a.user_id = $1
+      AND a.date = $2
+    `,
+    [userId, date]
+  );
+
+  return r.rows;
+};
