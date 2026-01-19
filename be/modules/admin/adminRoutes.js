@@ -26,5 +26,8 @@ router.get(
   adminService.listUsers,
 );
 
+// Audit Logs
+router.get("/audits", auth, role("admin"), adminService.getAudits);
+
 
 module.exports = router;

@@ -1,6 +1,8 @@
 const bcrypt = require("bcrypt");
 const db = require("../../config/db");
+const audit = require("./adminAudits");
 
+// ================== User Management ===================
 exports.createUser = async (req, res) => {
   const { name, email, password, role, company_id } = req.body;
 
@@ -9,13 +11,25 @@ exports.createUser = async (req, res) => {
 
   const hash = await bcrypt.hash(password, 10);
 
-  await db.query(
+  const result = await db.query(
     `
     INSERT INTO users(name,email,password_hash,role,company_id)
     VALUES($1,$2,$3,$4,$5)
     `,
     [name, email, hash, role || "intern", company_id],
   );
+  console.log("REQ USER:", req.user);
+
+
+  // const userId = result.rows[0].id;
+
+  // await audit.log({
+  //   adminId: req.user.id,
+  //   action: "CREATE_USER",
+  //   targetTable: "users",
+  //   targetId: userId,
+  //   description: `Membuat akun siswa ${email}`,
+  // });
 
   res.send({ success: true });
 };
@@ -32,6 +46,14 @@ exports.setOffice = async (req, res) => {
     `,
     [company_id, latitude, longitude, radius],
   );
+
+  await audit.log({
+    adminId: req.user.id,
+    action: "SET_OFFICE_LOCATION",
+    targetTable: "office_locations",
+    targetId: officeId,
+    description: "Mengubah lokasi kantor perusahaan",
+  });
 
   res.send({ success: true });
 };
@@ -106,4 +128,24 @@ WHERE u.company_id = $1;
   );
 
   return r.rows[0];
+};
+
+// ================== Audit Logs ===================
+exports.getAudits = async (_req, res) => {
+  const result = await db.query(`
+    SELECT 
+      a.id,
+      u.name AS admin_name,
+      a.action,
+      a.target_type,
+      a.target_id,
+      a.description,
+      a.created_at
+    FROM admin_audits a
+    JOIN users u ON u.id = a.admin_id
+    ORDER BY a.created_at DESC
+    LIMIT 100
+  `);
+
+  res.json(result.rows);
 };

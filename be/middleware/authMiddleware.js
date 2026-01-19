@@ -6,6 +6,11 @@ module.exports = async (req, res, next) => {
   if (!token) return res.status(401).send("No token");
 
   const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  const payload = {
+    id: decoded.id,
+    role: decoded.role,
+    company_id: decoded.company_id,
+  };
 
   const user = await db.query(
     `SELECT id, role, company_id FROM users WHERE id=$1`,
@@ -14,6 +19,6 @@ module.exports = async (req, res, next) => {
 
   if (!user.rowCount) return res.status(401).send("Invalid token");
 
-  req.user = user.rows[0];
+  req.user = payload;
   next();
 };

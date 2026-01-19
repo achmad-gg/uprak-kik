@@ -3,30 +3,6 @@ const jwt = require('jsonwebtoken');
 const users = require('../users/usersRepo');
 const path = require('path');
 
-exports.register = async (req, res) => {
-  const { name, email, password, company_id, role } = req.body;
-
-  if (!name || !email || !password) {
-    return res.status(400).json({
-      message: 'Name, email & password required',
-    });
-  }
-
-  try {
-    const hashed = await bcrypt.hash(password, 10);
-    await users.create(name, email, hashed, company_id, role || 'intern');
-
-    res.json({
-      success: true,
-      message: `User registered as ${role || 'intern'}`,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
