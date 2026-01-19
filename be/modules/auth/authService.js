@@ -36,6 +36,12 @@ exports.login = async (req, res) => {
     return res.status(401).json({ message: 'Invalid credentials' });
   }
 
+  if (user.status === false) {
+    return res.status(403).json({ 
+      message: 'Akun Anda telah dinonaktifkan. Hubungi Admin.' 
+    });
+  }
+
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) {
     return res.status(401).json({ message: 'Invalid credentials' });
