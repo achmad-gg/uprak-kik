@@ -3,9 +3,11 @@ const morgan = require("morgan");
 const rateLimit = require("./middleware/rateLimitMiddleware");
 const cors = require("cors");
 const path = require("path");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 
+app.use(cookieParser());
 app.use(express.json());
 app.use(morgan("dev"));
 app.use(rateLimit);
@@ -22,10 +24,7 @@ app.use("/api/attendance", require("./modules/attendance/attendanceRoutes"));
 app.use("/api/audit", require("./modules/audit/auditRoutes"));
 app.use("/api/export", require("./modules/export/exportRoutes"));
 app.use("/api/admin", require("./modules/admin/adminRoutes"));
-app.use(
-  '/uploads',
-  express.static(path.join(__dirname, 'uploads'))
-)
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use(
   "/static",
   express.static(path.join(process.cwd(), "uploads"), {
