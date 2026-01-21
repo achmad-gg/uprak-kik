@@ -1,20 +1,24 @@
-const repo = require("./attendanceRepo");
+const officeRepo = require("../companies/officesRepo");
 
-exports.checkLocation = async (companyId, lat, lng) => {
-  console.log("CHECK GEO:", {
-  companyId,
-  lat,
-  lng
-});
+exports.checkWithOffice = (office, lat, lng) => {
+  const R = 6371000;
+  const dLat = ((lat - office.latitude) * Math.PI) / 180;
+  const dLng = ((lng - office.longitude) * Math.PI) / 180;
 
-  if (isNaN(lat) || isNaN(lng)) throw "Invalid coordinates";
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((office.latitude * Math.PI) / 180) *
+      Math.cos((lat * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
 
-  const office = await repo.getOffice(companyId);
-  if (!office) throw "Office not found";
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  
+  const distance = R * c;
 
-  const dist = haversine(lat, lng, office.latitude, office.longitude);
-
-  return { office, dist, inside: dist <= office.radius * 1000 };
+  return {
+    inside: distance <= office.radius, 
+    distance: distance,
+  };
 };
 
 function haversine(lat1, lon1, lat2, lon2) {

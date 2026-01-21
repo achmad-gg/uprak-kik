@@ -1,71 +1,50 @@
 const bcrypt = require("bcrypt");
 const db = require("../../config/db");
-const audit = require("./adminAudits");
+const audit = require("./adminAudit");
 const companyRepo = require("../companies/companiesRepo");
 const officeRepo = require("../companies/officesRepo");
 
-// ================== User Management ===================
+/* =========================================
+   USER MANAGEMENT
+========================================= */
+
 exports.createUser = async (req, res) => {
   try {
     const {
-      name,
-      email,
-      password,
-      role = "intern",
-      company_id,
-      phone_number = null,
-      bio = null,
-      address = null,
-      profile_picture,
+      name, email, password, role = "intern", company_id,
+      phone_number, bio, address, profile_picture,
     } = req.body;
 
     if (!name || !email || !password || !company_id) {
       return res.status(400).json({ message: "Data wajib tidak lengkap" });
     }
 
-    if (!["intern", "admin"].includes(role)) {
-      return res.status(400).json({ message: "Role tidak valid" });
-    }
-
-    const exists = await db.query("SELECT 1 FROM users WHERE email=$1", [
-      email,
-    ]);
+    const exists = await db.query("SELECT 1 FROM users WHERE email=$1", [email]);
     if (exists.rowCount > 0) {
       return res.status(409).json({ message: "Email sudah terdaftar" });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
 
-    await db.query(
-      `
-      INSERT INTO users (
-        name,
-        email,
-        password_hash,
-        role,
-        company_id,
-        phone_number,
-        bio,
-        address,
-        profile_picture,
-        is_first_login,
-        status
-      ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,true,true
-      )
-      `,
+    const newUser = await db.query(
+      `INSERT INTO users (
+        name, email, password_hash, role, company_id,
+        phone_number, bio, address, profile_picture, is_first_login, status
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,true) RETURNING id`,
       [
-        name,
-        email,
-        password_hash,
-        role,
-        company_id,
-        phone_number,
-        bio,
-        address,
+        name, email, password_hash, role, company_id,
+        phone_number, bio, address,
         profile_picture || "/uploads/profiles/default-guest.png",
-      ],
+      ]
     );
+
+    await audit.log({
+      adminId: req.user.id,
+      action: "CREATE_USER",
+      targetTable: "users",
+      targetId: newUser.rows[0].id,
+      description: `Membuat user baru: ${email}`
+    });
 
     res.json({ success: true, message: "User berhasil dibuat" });
   } catch (err) {
@@ -87,68 +66,29 @@ exports.updateUser = async (req, res) => {
         phone_number = COALESCE($4, phone_number),
         address = COALESCE($5, address),
         bio = COALESCE($6, bio)
-       WHERE id = $7
-       RETURNING *`,
-      [name, email, role, phone_number, address, bio, id],
+       WHERE id = $7 RETURNING *`,
+      [name, email, role, phone_number, address, bio, id]
     );
 
-    if (result.rowCount === 0)
-      return res.status(404).json({ message: "User not found" });
-    res.json({
-      success: true,
-      message: "Data berhasil diperbarui",
-      user: result.rows[0],
+    if (result.rowCount === 0) return res.status(404).json({ message: "User not found" });
+
+    await audit.log({
+      adminId: req.user.id,
+      action: "UPDATE_USER",
+      targetTable: "users",
+      targetId: id,
+      description: `Update data user: ${email}`
     });
+
+    res.json({ success: true, message: "Data berhasil diperbarui", user: result.rows[0] });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: "Gagal update user" });
   }
-};
-
-exports.toggleStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    await db.query("UPDATE users SET status=$1 WHERE id=$2", [status, id]);
-
-    res.json({
-      success: true,
-      message: status ? "User diaktifkan" : "User dinonaktifkan",
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Gagal ubah status" });
-  }
-};
-
-exports.setOffice = async (req, res) => {
-  const { company_id, latitude, longitude, radius } = req.body;
-
-  await db.query(
-    `
-    INSERT INTO office_locations(company_id,latitude,longitude,radius,active)
-    VALUES($1,$2,$3,$4,true)
-    ON CONFLICT (company_id)
-    DO UPDATE SET latitude=$2, longitude=$3, radius=$4, active=true
-    `,
-    [company_id, latitude, longitude, radius],
-  );
-
-  await audit.log({
-    adminId: req.user.id,
-    action: "SET_OFFICE_LOCATION",
-    targetTable: "office_locations",
-    targetId: officeId,
-    description: "Mengubah lokasi kantor perusahaan",
-  });
-
-  res.send({ success: true });
 };
 
 exports.listUsers = async (req, res) => {
   try {
     const { company_id, role, limit = 20, offset = 0 } = req.query;
-
     const params = [];
     const conditions = [];
 
@@ -156,15 +96,12 @@ exports.listUsers = async (req, res) => {
       params.push(company_id);
       conditions.push(`u.company_id = $${params.length}`);
     }
-
-    if (role && role !== "all") {
+    if (role && role !== 'all') {
       params.push(role);
       conditions.push(`u.role = $${params.length}`);
     }
 
-    const whereClause =
-      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     params.push(limit, offset);
 
     const sql = `
@@ -184,151 +121,189 @@ exports.listUsers = async (req, res) => {
     const result = await db.query(sql, params);
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: 'Server error' });
   }
-};
-
-exports.dashboardSummary = async (companyId) => {
-  const r = await db.query(
-    `
-    SELECT
-  COUNT(u.id) FILTER (WHERE u.role = 'intern')             AS total_users,
-
-  COUNT(a.id) FILTER (
-    WHERE a.date = CURRENT_DATE AND a.check_in IS NOT NULL
-  )                                                        AS present_today,
-
-  COUNT(u.id) FILTER (
-    WHERE u.role = 'intern'
-      AND NOT EXISTS (
-        SELECT 1 FROM attendances a2
-        WHERE a2.user_id = u.id
-          AND a2.date = CURRENT_DATE
-      )
-  )                                                        AS absent_today,
-
-  COUNT(a.id) FILTER (
-    WHERE a.date = CURRENT_DATE AND a.check_out IS NOT NULL
-  )                                                        AS checked_out_today,
-
-  (SELECT COUNT(*) FROM office_locations WHERE active=true)
-                                                           AS active_offices
-FROM users u
-LEFT JOIN attendances a
-  ON a.user_id = u.id AND a.date = CURRENT_DATE
-WHERE u.company_id = $1;
-
-  `,
-    [companyId],
-  );
-
-  return r.rows[0];
-};
-
-exports.resetPassword = async (req, res) => {
-  const defaultPassword = "123456";
-  const hash = await bcrypt.hash(defaultPassword, 10);
-
-  await db.query(
-    `
-    UPDATE users
-    SET password_hash=$1, is_first_login=true
-    WHERE id=$2
-    `,
-    [hash, req.params.id],
-  );
-
-  res.send({ success: true, defaultPassword });
 };
 
 exports.disableUser = async (req, res) => {
   await db.query("UPDATE users SET status=false WHERE id=$1", [req.params.id]);
-
+  await audit.log({ adminId: req.user.id, action: "DISABLE_USER", targetId: req.params.id, description: "Nonaktifkan user" });
   res.send({ success: true });
 };
 
 exports.enableUser = async (req, res) => {
   await db.query("UPDATE users SET status=true WHERE id=$1", [req.params.id]);
+  await audit.log({ adminId: req.user.id, action: "ENABLE_USER", targetId: req.params.id, description: "Aktifkan user" });
   res.send({ success: true });
 };
 
 exports.deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
-
-    const userCheck = await db.query("SELECT id FROM users WHERE id = $1", [
-      id,
-    ]);
-    if (userCheck.rowCount === 0) {
-      return res.status(404).json({ message: "User tidak ditemukan" });
-    }
-
     await db.query("DELETE FROM users WHERE id = $1", [id]);
-
+    await audit.log({ adminId: req.user.id, action: "DELETE_USER", targetId: id, description: "Hapus user permanen" });
     res.json({ success: true, message: "User berhasil dihapus permanen" });
   } catch (err) {
-    console.error(err);
     if (err.code === "23503") {
-      return res
-        .status(400)
-        .json({
-          message:
-            "Gagal: User memiliki riwayat absensi. Nonaktifkan saja akun ini.",
-        });
+      return res.status(400).json({ message: "Gagal: User memiliki riwayat absensi." });
     }
     res.status(500).json({ message: "Gagal menghapus user" });
   }
 };
 
-/* =======================
-  COMPANIES
-======================= */
-exports.createCompany = async (req, res) => {
-  const { name } = req.body;
-  if (!name) return res.status(400).json({ message: "Name required" });
-
-  const result = await companyRepo.createCompany(name);
-  res.json(result.rows[0]);
+exports.resetPassword = async (req, res) => {
+  const defaultPassword = "123456";
+  const hash = await bcrypt.hash(defaultPassword, 10);
+  await db.query("UPDATE users SET password_hash=$1, is_first_login=true WHERE id=$2", [hash, req.params.id]);
+  res.send({ success: true, defaultPassword });
 };
 
+exports.dashboardSummary = async (companyId) => {
+  const r = await db.query(
+    `SELECT
+      COUNT(u.id) FILTER (WHERE u.role = 'intern') AS total_users,
+      COUNT(a.id) FILTER (WHERE a.date = CURRENT_DATE AND a.check_in_at IS NOT NULL) AS present_today,
+      COUNT(u.id) FILTER (WHERE u.role = 'intern' AND NOT EXISTS (SELECT 1 FROM attendances a2 WHERE a2.user_id = u.id AND a2.date = CURRENT_DATE)) AS absent_today,
+      COUNT(a.id) FILTER (WHERE a.date = CURRENT_DATE AND a.check_out_at IS NOT NULL) AS checked_out_today,
+      (SELECT COUNT(*) FROM office_locations WHERE active=true) AS active_offices
+    FROM users u
+    LEFT JOIN attendances a ON a.user_id = u.id AND a.date = CURRENT_DATE
+    WHERE u.company_id = $1;`,
+    [companyId]
+  );
+  return r.rows[0];
+};
+
+
+/* =========================================
+   COMPANY MANAGEMENT
+========================================= */
+
 exports.listCompanies = async (req, res) => {
-  const result = await companyRepo.getAllCompanies();
-  res.json(result.rows);
+  try {
+    const result = await companyRepo.getAllCompanies();
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ ERROR LIST COMPANIES:", err.message); 
+    res.status(500).json({ message: "Gagal load companies: " + err.message });
+  }
+};
+
+exports.createCompany = async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ message: "Name required" });
+
+    const result = await companyRepo.createCompany(name);
+    
+    await audit.log({
+      adminId: req.user.id,
+      action: "CREATE_COMPANY",
+      targetTable: "companies",
+      targetId: result.rows[0].id,
+      description: `Membuat perusahaan: ${name}`
+    });
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: "Gagal membuat company" });
+  }
 };
 
 exports.updateCompany = async (req, res) => {
-  const { id } = req.params;
-  const { name } = req.body;
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
 
-  const result = await companyRepo.updateCompany(id, name);
-  res.json(result.rows[0]);
+    const result = await companyRepo.updateCompany(id, name);
+    
+    await audit.log({
+      adminId: req.user.id,
+      action: "UPDATE_COMPANY",
+      targetId: id,
+      description: `Update nama company: ${name}`
+    });
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: "Gagal update company" });
+  }
+};
+
+exports.toggleCompanyStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await companyRepo.toggleStatus(id);
+    await audit.log({ adminId: req.user.id, action: "TOGGLE_COMPANY", targetId: id, description: "Ubah status company" });
+    res.json({ success: true, message: "Status perusahaan diubah" });
+  } catch (err) {
+    res.status(500).json({ message: "Gagal ubah status" });
+  }
 };
 
 exports.deleteCompany = async (req, res) => {
-  await companyRepo.deleteCompany(req.params.id);
-  res.json({ message: "Company deleted" });
+  try {
+    const { id } = req.params;
+    await companyRepo.deleteCompany(id);
+    await audit.log({ adminId: req.user.id, action: "DELETE_COMPANY", targetId: id, description: "Hapus company" });
+    res.json({ message: "Company deleted" });
+  } catch (err) {
+    res.status(500).json({ message: "Gagal hapus company" });
+  }
 };
 
-/* =======================
-   OFFICE
-======================= */
+
+/* =========================================
+   OFFICE LOCATIONS
+========================================= */
+
+exports.getOffice = async (req, res) => {
+  try {
+    const office = await officeRepo.getByCompanyId(req.user.company_id);
+    res.json(office);
+  } catch (err) {
+    res.status(500).json({ message: "Gagal load office" });
+  }
+};
+
+exports.getOfficeByCompany = async (req, res) => {
+  try {
+    const office = await officeRepo.getByCompanyId(req.params.id);
+    res.json(office);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching office" });
+  }
+};
 
 exports.setOffice = async (req, res) => {
-  const { latitude, longitude, radius, updated_at } = req.body;
-  const companyId = req.user.company_id;
+  try {
+    const { latitude, longitude, radius, address, company_id } = req.body;
+    
+    const targetCompanyId = company_id || req.user.company_id;
 
-  if (!latitude || !longitude || !radius) {
-    return res.status(400).json({ message: "Incomplete office data" });
+    if (!targetCompanyId) {
+       return res.status(400).json({ message: "Target Company ID tidak ditemukan" });
+    }
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({ message: "Incomplete office data" });
+    }
+
+    const result = await officeRepo.upsert(targetCompanyId, {
+      latitude, longitude, radius, address
+    });
+
+    await audit.log({
+      adminId: req.user.id,
+      action: "SET_OFFICE",
+      targetTable: "office_locations",
+      targetId: result.rows[0].id,
+      description: `Set lokasi kantor untuk company ID: ${targetCompanyId}`
+    });
+
+    res.json({ success: true, message: "Lokasi kantor disimpan" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Gagal simpan kantor" });
   }
-
-  const result = await officeRepo.setOffice(
-    companyId,
-    latitude,
-    longitude,
-    radius,
-    updated_at
-  );
-
-  res.json(result.rows[0]);
 };

@@ -18,20 +18,33 @@ exports.findToday = async (userId) => {
   return r.rows[0];
 };
 
-exports.processCheckIn = async (user, lat, lng, screen, ip, ua, photo) => {
+exports.processCheckIn = async (
+  user,
+  office,
+  lat,
+  lng,
+  screen,
+  ip,
+  ua,
+  photoPath,
+) => {
   const client = await db.connect();
 
   try {
     await client.query("BEGIN");
 
-    const { office, dist } = await geo.checkLocation(user.company_id, lat, lng);
-    const score = await risk.calculate(ip, ua, screen, dist, office.radius);
+    const score = await risk.calculate(
+      ip,
+      ua,
+      screen,
+      0, // distance sudah dicek di controller
+      office.radius,
+    );
 
     const att = await client.query(
       `
       INSERT INTO attendances(
         user_id,
-        company_id,
         date,
         check_in_at,
         ip_address,
@@ -39,10 +52,10 @@ exports.processCheckIn = async (user, lat, lng, screen, ip, ua, photo) => {
         screen_size,
         risk_flag
       )
-      VALUES($1,$2,CURRENT_DATE,NOW(),$3,$4,$5,$6)
+      VALUES($1,CURRENT_DATE,NOW(),$2,$3,$4,$5)
       RETURNING id
       `,
-      [user.id, user.company_id, ip, ua, screen, score],
+      [user.id, ip, ua, screen, score],
     );
 
     await client.query(
@@ -56,69 +69,90 @@ exports.processCheckIn = async (user, lat, lng, screen, ip, ua, photo) => {
       )
       VALUES($1,'IN',$2,$3,$4)
       `,
-      [att.rows[0].id, photo, lat, lng],
+      [att.rows[0].id, photoPath, lat, lng],
     );
 
     await client.query("COMMIT");
   } catch (e) {
     await client.query("ROLLBACK");
-
-    // 🔒 KUNCI DOUBLE CHECK-IN
     if (e.code === "23505") {
       throw new Error("Already checked in today");
     }
-
     throw e;
   } finally {
     client.release();
   }
 };
 
-exports.processCheckOut = async (user, lat, lng, screen, ip, ua, photo) => {
+exports.processCheckOut = async (
+  user,
+  attendanceId,
+  lat,
+  lng,
+  screen,
+  ip,
+  ua,
+  photoPath,
+  riskScore,
+) => {
+  // 🛑 HARD VALIDATION (jangan percaya layer atas)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error("INVALID_COORDINATES");
+  }
+
+  if (!attendanceId || isNaN(attendanceId)) {
+    throw new Error("INVALID_ATTENDANCE_ID");
+  }
+
+  if (!Number.isInteger(riskScore)) {
+    throw new Error("INVALID_RISK_SCORE");
+  }
+
   const client = await db.connect();
 
   try {
     await client.query("BEGIN");
 
+    // 1️⃣ lock & verify attendance milik user
     const r = await client.query(
       `
-      SELECT *
+      SELECT id, check_out_at
       FROM attendances
-      WHERE user_id=$1 AND date=CURRENT_DATE
+      WHERE id = $1 AND user_id = $2
       FOR UPDATE
       `,
-      [user.id],
+      [attendanceId, user.id],
     );
 
     const att = r.rows[0];
-    if (!att) throw new Error("No check-in");
-    if (att.check_out_at) throw new Error("Already checked out");
+    if (!att) throw new Error("ATTENDANCE_NOT_FOUND");
+    if (att.check_out_at) throw new Error("ALREADY_CHECKED_OUT");
 
-    const mins = (Date.now() - new Date(att.check_in_at)) / 60000;
-    if (mins < 1) throw new Error("Presence too short");
-
-    const { office, dist } = await geo.checkLocation(user.company_id, lat, lng);
-    const score =
-      att.risk_flag |
-      (await risk.calculate(ip, ua, screen, dist, office.radius));
-
+    // 2️⃣ simpan foto (lat/lng DOUBLE)
     await client.query(
       `
       INSERT INTO attendance_photos(
-        attendance_id,type,photo_path,latitude,longitude
+        attendance_id,
+        type,
+        photo_path,
+        latitude,
+        longitude
       )
-      VALUES($1,'OUT',$2,$3,$4)
+      VALUES ($1,'OUT',$2,$3,$4)
       `,
-      [att.id, photo, lat, lng],
+      [attendanceId, photoPath, lat, lng],
     );
 
+    // 3️⃣ update attendance
     await client.query(
       `
       UPDATE attendances
-      SET check_out_at=NOW(), risk_flag=$2
-      WHERE id=$1
+      SET check_out_at = NOW(),
+          status = 'OUT',
+          risk_flag = risk_flag | $2
+      WHERE id = $1
       `,
-      [att.id, score],
+      [attendanceId, riskScore],
     );
 
     await client.query("COMMIT");
@@ -136,8 +170,8 @@ exports.getUserHistory = async (userId) => {
     `
     SELECT
       a.date,
-      a.check_in,
-      a.check_out,
+      a.check_in_at AS check_in,
+      a.check_out_at AS check_out,
       a.status,
       a.risk_flag
     FROM attendances a
@@ -156,8 +190,8 @@ exports.getUserAttendanceDetail = async (userId, date) => {
     `
     SELECT
       a.date,
-      a.check_in,
-      a.check_out,
+      a.check_in_at AS check_in,
+      a.check_out_at AS check_out,
       a.status,
       a.risk_flag,
       p.type,
@@ -168,7 +202,7 @@ exports.getUserAttendanceDetail = async (userId, date) => {
     WHERE a.user_id = $1
       AND a.date = $2
     `,
-    [userId, date]
+    [userId, date],
   );
 
   return r.rows;
