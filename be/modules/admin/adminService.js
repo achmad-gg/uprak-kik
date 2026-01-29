@@ -105,18 +105,21 @@ exports.listUsers = async (req, res) => {
     params.push(limit, offset);
 
     const sql = `
-      SELECT 
-        u.id, u.name, u.email, u.role, u.phone_number, 
-        u.address, u.profile_picture, u.created_at, u.status,
-        c.name AS company_name,
-        a.check_in_at, a.check_out_at
-      FROM users u
-      JOIN companies c ON c.id = u.company_id
-      LEFT JOIN attendances a ON a.user_id = u.id AND a.date = CURRENT_DATE
-      ${whereClause}
-      ORDER BY u.created_at DESC
-      LIMIT $${params.length - 1} OFFSET $${params.length}
-    `;
+          SELECT 
+            u.id, u.name, u.email, u.role, u.phone_number, 
+            u.address, u.profile_picture, u.created_at, u.status,
+            c.name AS company_name,
+            -- Pastikan dua baris di bawah ini ada:
+            a.check_in_at AS check_in, 
+            a.check_out_at AS check_out
+          FROM users u
+          JOIN companies c ON c.id = u.company_id
+          -- Join khusus untuk mengambil data absen HARI INI
+          LEFT JOIN attendances a ON a.user_id = u.id AND a.date = CURRENT_DATE
+          ${whereClause}
+          ORDER BY u.created_at DESC
+          LIMIT $${params.length - 1} OFFSET $${params.length}
+        `;
 
     const result = await db.query(sql, params);
     res.json(result.rows);
@@ -138,16 +141,47 @@ exports.enableUser = async (req, res) => {
 };
 
 exports.deleteUser = async (req, res) => {
+  const client = await db.connect();
+  
   try {
     const { id } = req.params;
-    await db.query("DELETE FROM users WHERE id = $1", [id]);
-    await audit.log({ adminId: req.user.id, action: "DELETE_USER", targetId: id, description: "Hapus user permanen" });
-    res.json({ success: true, message: "User berhasil dihapus permanen" });
-  } catch (err) {
-    if (err.code === "23503") {
-      return res.status(400).json({ message: "Gagal: User memiliki riwayat absensi." });
+
+    await client.query("BEGIN");
+
+    const userCheck = await client.query("SELECT id, email FROM users WHERE id = $1", [id]);
+    if (userCheck.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "User tidak ditemukan" });
     }
-    res.status(500).json({ message: "Gagal menghapus user" });
+
+    await client.query(`
+      DELETE FROM attendance_photos 
+      WHERE attendance_id IN (
+        SELECT id FROM attendances WHERE user_id = $1
+      )
+    `, [id]);
+
+    await client.query("DELETE FROM attendances WHERE user_id = $1", [id]);
+
+    await client.query("DELETE FROM users WHERE id = $1", [id]);
+
+    await client.query("COMMIT");
+
+    await audit.log({
+      adminId: req.user.id,
+      action: "DELETE_USER",
+      targetId: id,
+      description: `Menghapus user permanen beserta riwayat absensi: ${userCheck.rows[0].email}`
+    });
+
+    res.json({ success: true, message: "User dan semua riwayat absensi berhasil dihapus permanen" });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("DELETE USER ERROR:", err);
+    res.status(500).json({ message: "Gagal menghapus user: " + err.message });
+  } finally {
+    client.release();
   }
 };
 
@@ -196,17 +230,23 @@ exports.createCompany = async (req, res) => {
 
     const result = await companyRepo.createCompany(name);
     
-    await audit.log({
-      adminId: req.user.id,
-      action: "CREATE_COMPANY",
-      targetTable: "companies",
-      targetId: result.rows[0].id,
-      description: `Membuat perusahaan: ${name}`
-    });
+    // Audit Log (dibungkus try-catch agar tidak memblokir flow utama jika error)
+    try {
+        await audit.log({
+          adminId: req.user.id,
+          action: "CREATE_COMPANY",
+          targetTable: "companies",
+          targetId: result.rows[0].id,
+          description: `Membuat perusahaan: ${name}`
+        });
+    } catch (auditErr) {
+        console.error("Audit Log Error:", auditErr.message);
+    }
 
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ message: "Gagal membuat company" });
+    console.error("❌ CREATE COMPANY ERROR:", err); 
+    res.status(500).json({ message: "Gagal membuat company: " + err.message });
   }
 };
 

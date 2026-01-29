@@ -149,13 +149,11 @@ exports.checkOut = async (req, res) => {
 };
 
 exports.getMyHistory = async (userId) => {
-  return await attendanceRepo.getUserHistory(userId);
   if (!userId) throw new Error("USER_ID_REQUIRED");
   return attendanceRepo.getUserHistory(userId);
 };
 
 exports.getMyAttendanceDetail = async (userId, date) => {
-  return await attendanceRepo.getUserAttendanceDetail(userId, date);
   if (!userId) throw new Error("USER_ID_REQUIRED");
   if (!date) throw new Error("DATE_REQUIRED");
 
