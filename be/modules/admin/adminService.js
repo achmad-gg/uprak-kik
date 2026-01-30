@@ -186,13 +186,6 @@ exports.deleteUser = async (req, res) => {
       return res.status(404).json({ message: "User tidak ditemukan" });
     }
 
-    await client.query(`
-      DELETE FROM attendance_photos 
-      WHERE attendance_id IN (
-        SELECT id FROM attendances WHERE user_id = $1
-      )
-    `, [id]);
-
     await client.query("DELETE FROM attendances WHERE user_id = $1", [id]);
 
     await client.query("DELETE FROM users WHERE id = $1", [id]);
@@ -230,9 +223,9 @@ exports.dashboardSummary = async (companyId) => {
   const r = await db.query(
     `SELECT
       COUNT(u.id) FILTER (WHERE u.role = 'intern') AS total_users,
-      COUNT(a.id) FILTER (WHERE a.date = CURRENT_DATE AND a.check_in_at IS NOT NULL) AS present_today,
+      COUNT(a.id) FILTER (WHERE a.date = CURRENT_DATE AND a.check_in_at IS NOT NULL AND u.role = 'intern') AS present_today,
       COUNT(u.id) FILTER (WHERE u.role = 'intern' AND NOT EXISTS (SELECT 1 FROM attendances a2 WHERE a2.user_id = u.id AND a2.date = CURRENT_DATE)) AS absent_today,
-      COUNT(a.id) FILTER (WHERE a.date = CURRENT_DATE AND a.check_out_at IS NOT NULL) AS checked_out_today,
+      COUNT(a.id) FILTER (WHERE a.date = CURRENT_DATE AND a.check_out_at IS NOT NULL AND u.role = 'intern') AS checked_out_today,
       (SELECT COUNT(*) FROM office_locations WHERE active=true) AS active_offices
     FROM users u
     LEFT JOIN attendances a ON a.user_id = u.id AND a.date = CURRENT_DATE

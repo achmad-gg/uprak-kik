@@ -1,7 +1,8 @@
 const attendanceRepo = require("./attendanceRepo");
-const officeRepo = require("../companies/officesRepo"); // Pastikan path ini benar
+const officeRepo = require("../companies/officesRepo");
+const holidaysRepo = require("../holidays/holidaysRepo");
 const geo = require("./attendanceGeo");
-const risk = require("./attendanceRisk"); // Jika tidak dipakai, boleh dihapus
+const risk = require("./attendanceRisk");
 const path = require("path");
 const fs = require("fs");
 
@@ -10,7 +11,6 @@ const fs = require("fs");
 =========================== */
 exports.checkIn = async (req, res) => {
   try {
-    // 🔥 FIX: Konversi ke Float agar dibaca sebagai Number oleh Repo
     const latitude = parseFloat(req.body.latitude);
     const longitude = parseFloat(req.body.longitude);
     const companyId = req.user.company_id;
@@ -19,10 +19,20 @@ exports.checkIn = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ message: "Foto selfie wajib diupload" });
     }
-    // Validasi NaN (Not a Number)
     if (isNaN(latitude) || isNaN(longitude)) {
       if (req.file.path) fs.unlinkSync(req.file.path);
       return res.status(400).json({ message: "Lokasi GPS tidak valid" });
+    }
+
+    // 🔥 LEVEL UP: Cek Hari Libur
+    const today = new Date().toISOString().split('T')[0];
+    const isHoliday = await holidaysRepo.checkDate(today);
+    
+    if (isHoliday) {
+       if (req.file.path) fs.unlinkSync(req.file.path);
+       return res.status(403).json({ 
+         message: `Absen Ditolak: Hari ini libur nasional (${isHoliday.name}).` 
+       });
     }
 
     // 2. Ambil Lokasi Kantor
@@ -42,6 +52,15 @@ exports.checkIn = async (req, res) => {
       });
     }
 
+    // 🔥 LEVEL UP: Hitung Risk Score di Service (bukan di Repo)
+    const riskScore = await risk.calculate(
+      req.ip,
+      req.headers["user-agent"],
+      req.headers["x-screen"] || "",
+      check.distance, // Gunakan jarak asli
+      office.radius
+    );
+
     // 4. Simpan ke Database
     const photoPath = `/uploads/attendance/${req.file.filename}`;
     
@@ -53,7 +72,8 @@ exports.checkIn = async (req, res) => {
       req.headers["x-screen"] || "",
       req.ip,                       
       req.headers["user-agent"],    
-      photoPath                     
+      photoPath,
+      riskScore // Kirim score yang sudah dihitung
     );
 
     res.json({ success: true, message: "Check-in berhasil! Selamat bekerja." });
@@ -75,7 +95,6 @@ exports.checkIn = async (req, res) => {
 =========================== */
 exports.checkOut = async (req, res) => {
   try {
-    // 🔥 FIX: Konversi ke Float agar tidak dianggap INVALID_COORDINATES
     const latitude = parseFloat(req.body.latitude);
     const longitude = parseFloat(req.body.longitude);
     const userId = req.user.id;
@@ -130,8 +149,8 @@ exports.checkOut = async (req, res) => {
     await attendanceRepo.processCheckOut(
       req.user,                   
       todayAtt.id,                
-      latitude,                   // Pastikan ini Float/Number
-      longitude,                  // Pastikan ini Float/Number
+      latitude,                   
+      longitude,                  
       req.headers["x-screen"] || "",
       req.ip,
       req.headers["user-agent"],
@@ -158,4 +177,21 @@ exports.getMyAttendanceDetail = async (userId, date) => {
   if (!date) throw new Error("DATE_REQUIRED");
 
   return attendanceRepo.getUserAttendanceDetail(userId, date);
+};
+
+exports.getMonthlyRecap = async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    const userId = req.user.id;
+
+    if (!month || !year) {
+      return res.status(400).json({ message: "Parameter bulan dan tahun wajib diisi" });
+    }
+
+    const history = await attendanceRepo.getMonthlyRecap(userId, month, year);
+    res.json({ success: true, data: history });
+  } catch (err) {
+    console.error("Get Monthly Recap Error:", err);
+    res.status(500).json({ message: "Terjadi kesalahan server saat mengambil rekap bulanan" });
+  }
 };

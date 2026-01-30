@@ -27,19 +27,12 @@ exports.processCheckIn = async (
   ip,
   ua,
   photoPath,
+  riskScore 
 ) => {
   const client = await db.connect();
 
   try {
     await client.query("BEGIN");
-
-    const score = await risk.calculate(
-      ip,
-      ua,
-      screen,
-      0, // distance sudah dicek di controller
-      office.radius,
-    );
 
     const att = await client.query(
       `
@@ -55,7 +48,7 @@ exports.processCheckIn = async (
       VALUES($1,CURRENT_DATE,NOW(),$2,$3,$4,$5)
       RETURNING id
       `,
-      [user.id, ip, ua, screen, score],
+      [user.id, ip, ua, screen, riskScore], // Gunakan riskScore dari parameter
     );
 
     await client.query(
@@ -95,7 +88,6 @@ exports.processCheckOut = async (
   photoPath,
   riskScore,
 ) => {
-  // 🛑 HARD VALIDATION (jangan percaya layer atas)
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     throw new Error("INVALID_COORDINATES");
   }
@@ -104,6 +96,7 @@ exports.processCheckOut = async (
     throw new Error("INVALID_ATTENDANCE_ID");
   }
 
+  // Validasi integer untuk riskScore
   if (!Number.isInteger(riskScore)) {
     throw new Error("INVALID_RISK_SCORE");
   }
@@ -113,7 +106,6 @@ exports.processCheckOut = async (
   try {
     await client.query("BEGIN");
 
-    // 1️⃣ lock & verify attendance milik user
     const r = await client.query(
       `
       SELECT id, check_out_at
@@ -128,7 +120,6 @@ exports.processCheckOut = async (
     if (!att) throw new Error("ATTENDANCE_NOT_FOUND");
     if (att.check_out_at) throw new Error("ALREADY_CHECKED_OUT");
 
-    // 2️⃣ simpan foto (lat/lng DOUBLE)
     await client.query(
       `
       INSERT INTO attendance_photos(
@@ -143,7 +134,6 @@ exports.processCheckOut = async (
       [attendanceId, photoPath, lat, lng],
     );
 
-    // 3️⃣ update attendance
     await client.query(
       `
       UPDATE attendances
@@ -184,7 +174,6 @@ exports.getUserHistory = async (userId) => {
   return r.rows;
 };
 
-// Mengambil detail kehadiran pengguna pada tanggal tertentu
 exports.getUserAttendanceDetail = async (userId, date) => {
   const r = await db.query(
     `
@@ -205,5 +194,19 @@ exports.getUserAttendanceDetail = async (userId, date) => {
     [userId, date],
   );
 
+  return r.rows;
+};
+
+exports.getMonthlyRecap = async (userId, month, year) => {
+  const r = await db.query(
+    `SELECT a.date, a.check_in_at, a.check_out_at, a.status,
+            p_in.photo_path as check_in_photo, p_out.photo_path as check_out_photo
+     FROM attendances a
+     LEFT JOIN attendance_photos p_in ON a.id = p_in.attendance_id AND p_in.type = 'IN'
+     LEFT JOIN attendance_photos p_out ON a.id = p_out.attendance_id AND p_out.type = 'OUT'
+     WHERE a.user_id = $1 AND EXTRACT(MONTH FROM a.date) = $2 AND EXTRACT(YEAR FROM a.date) = $3
+     ORDER BY a.date ASC`,
+    [userId, month, year]
+  );
   return r.rows;
 };

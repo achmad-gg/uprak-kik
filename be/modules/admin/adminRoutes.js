@@ -17,7 +17,6 @@ router.get("/users/all", auth, role("admin"), adminService.listUsers);
 router.delete("/users/:id", auth, role("admin"), adminService.deleteUser);
 
 // === COMPANIES ===
-router.post("/create/company", auth, role("admin"), adminService.createCompany); 
 router.post("/companies", auth, role("admin"), adminService.createCompany); 
 router.get("/companies", auth, role("admin"), adminService.listCompanies);
 router.put("/companies/:id", auth, role("admin"), adminService.updateCompany);

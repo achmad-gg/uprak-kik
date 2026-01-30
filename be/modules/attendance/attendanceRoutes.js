@@ -18,6 +18,8 @@ router.get("/me/history", auth, async (req, res) => {
   }
 });
 
+router.get("/me/recap", auth, svc.getMonthlyRecap);
+
 router.get("/me/:date", auth, async (req, res) => {
   try {
     const data = await svc.getMyAttendanceDetail(
