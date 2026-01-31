@@ -19,7 +19,7 @@ router.get("/me/history", auth, async (req, res) => {
 });
 
 router.get("/me/recap", auth, svc.getMonthlyRecap);
-
+router.get("/me/office", auth, svc.getMyOffice);
 router.get("/me/:date", auth, async (req, res) => {
   try {
     const data = await svc.getMyAttendanceDetail(
@@ -32,6 +32,7 @@ router.get("/me/:date", auth, async (req, res) => {
     res.status(500).send("Failed to get attendance detail");
   }
 });
+
 
 
 module.exports = router;

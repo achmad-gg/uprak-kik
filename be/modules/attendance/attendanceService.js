@@ -1,92 +1,105 @@
-const attendanceRepo = require("./attendanceRepo");
+const repo = require("./attendanceRepo");
 const officeRepo = require("../companies/officesRepo");
 const holidaysRepo = require("../holidays/holidaysRepo");
 const geo = require("./attendanceGeo");
 const risk = require("./attendanceRisk");
-const path = require("path");
 const fs = require("fs");
+
+const cleanupFile = (req) => {
+  if (req.file && req.file.path) {
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch (e) {
+      console.error("Gagal hapus file sampah:", e.message);
+    }
+  }
+};
 
 /* ===========================
    CHECK-IN
 =========================== */
 exports.checkIn = async (req, res) => {
   try {
-    const latitude = parseFloat(req.body.latitude);
-    const longitude = parseFloat(req.body.longitude);
-    const companyId = req.user.company_id;
-
-    // 1. Validasi Input
-    if (!req.file) {
-      return res.status(400).json({ message: "Foto selfie wajib diupload" });
-    }
-    if (isNaN(latitude) || isNaN(longitude)) {
-      if (req.file.path) fs.unlinkSync(req.file.path);
-      return res.status(400).json({ message: "Lokasi GPS tidak valid" });
-    }
-
-    // 🔥 LEVEL UP: Cek Hari Libur
-    const today = new Date().toISOString().split('T')[0];
-    const isHoliday = await holidaysRepo.checkDate(today);
+    const todayStr = new Date().toISOString().split('T')[0];
     
+    const isHoliday = await holidaysRepo.checkDate(todayStr);
     if (isHoliday) {
-       if (req.file.path) fs.unlinkSync(req.file.path);
-       return res.status(403).json({ 
-         message: `Absen Ditolak: Hari ini libur nasional (${isHoliday.name}).` 
-       });
-    }
-
-    // 2. Ambil Lokasi Kantor
-    const office = await officeRepo.getByCompanyId(companyId);
-    if (!office) {
-      if (req.file.path) fs.unlinkSync(req.file.path);
-      return res.status(400).json({ message: "Lokasi kantor belum diatur oleh Admin" });
-    }
-
-    // 3. Cek Radius (Geofencing)
-    const check = geo.checkWithOffice(office, latitude, longitude);
-    
-    if (!check.inside) {
-      if (req.file.path) fs.unlinkSync(req.file.path);
+      cleanupFile(req);
       return res.status(403).json({ 
-        message: `Anda berada di luar radius kantor! Jarak: ${Math.round(check.distance)} meter.` 
+        message: `Absen Ditolak: Hari ini libur nasional (${isHoliday.name}).` 
       });
     }
 
-    // 🔥 LEVEL UP: Hitung Risk Score di Service (bukan di Repo)
+    const existingAtt = await repo.findToday(req.user.id);
+    if (existingAtt) {
+      cleanupFile(req);
+      return res.status(400).json({ message: "Anda sudah melakukan check-in hari ini." });
+    }
+
+    if (!req.file) return res.status(400).json({ message: "Foto selfie wajib diupload" });
+    
+    const lat = parseFloat(req.body.latitude);
+    const lng = parseFloat(req.body.longitude);
+    if (isNaN(lat) || isNaN(lng)) {
+      cleanupFile(req);
+      return res.status(400).json({ message: "Koordinat GPS tidak valid" });
+    }
+
+    const office = await officeRepo.getByCompanyId(req.user.company_id);
+    if (!office) {
+      cleanupFile(req);
+      return res.status(400).json({ message: "Lokasi kantor belum diatur oleh Admin" });
+    }
+
+    const geoCheck = geo.checkWithOffice(office, lat, lng);
+    if (!geoCheck.inside) {
+      cleanupFile(req);
+      return res.status(403).json({ 
+        message: `Jarak terlalu jauh (${geoCheck.distance}m). Maksimal ${office.radius}m.` 
+      });
+    }
+
     const riskScore = await risk.calculate(
       req.ip,
       req.headers["user-agent"],
       req.headers["x-screen"] || "",
-      check.distance, // Gunakan jarak asli
+      geoCheck.distance,
       office.radius
     );
 
-    // 4. Simpan ke Database
+
+    const currentHour = new Date().getHours();
+    const isLate = currentHour >= 9; // Anggap telat jika check-in jam 9 ke atas
+
+    // 5. EKSEKUSI DATABASE
     const photoPath = `/uploads/attendance/${req.file.filename}`;
     
-    await attendanceRepo.processCheckIn(
-      req.user,                     
-      office,                       
-      latitude,                     
-      longitude,                    
-      req.headers["x-screen"] || "",
-      req.ip,                       
-      req.headers["user-agent"],    
+    await repo.processCheckIn({
+      user: req.user,
+      office,
+      lat, 
+      lng,
+      screen: req.headers["x-screen"] || "",
+      ip: req.ip,
+      ua: req.headers["user-agent"],
       photoPath,
-      riskScore // Kirim score yang sudah dihitung
-    );
+      riskScore,
+      isLate
+    });
 
-    res.json({ success: true, message: "Check-in berhasil! Selamat bekerja." });
+    res.json({ 
+      success: true, 
+      message: isLate ? "Check-in berhasil (Terlambat)." : "Check-in berhasil! Selamat bekerja." 
+    });
 
   } catch (err) {
+    cleanupFile(req); 
     console.error("Check-In Error:", err);
-    if (req.file && req.file.path) fs.unlinkSync(req.file.path); 
     
-    if (err.message === "Already checked in today" || err.code === '23505') { 
-        return res.status(400).json({ message: "Anda sudah melakukan check-in hari ini" });
+    if (err.message === "ALREADY_CHECKED_IN") {
+       return res.status(400).json({ message: "Anda sudah check-in sebelumnya." });
     }
-    
-    res.status(500).json({ message: "Terjadi kesalahan server saat check-in" });
+    res.status(500).json({ message: "Terjadi kesalahan server." });
   }
 };
 
@@ -95,103 +108,102 @@ exports.checkIn = async (req, res) => {
 =========================== */
 exports.checkOut = async (req, res) => {
   try {
-    const latitude = parseFloat(req.body.latitude);
-    const longitude = parseFloat(req.body.longitude);
-    const userId = req.user.id;
-    const companyId = req.user.company_id;
+    const lat = parseFloat(req.body.latitude);
+    const lng = parseFloat(req.body.longitude);
 
-    if (!req.file) {
-      return res.status(400).json({ message: "Foto selfie wajib diupload" });
-    }
-    if (isNaN(latitude) || isNaN(longitude)) {
-      if (req.file.path) fs.unlinkSync(req.file.path);
-      return res.status(400).json({ message: "Lokasi GPS tidak valid" });
+    if (!req.file) return res.status(400).json({ message: "Foto selfie wajib diupload" });
+    if (isNaN(lat) || isNaN(lng)) {
+      cleanupFile(req);
+      return res.status(400).json({ message: "Koordinat GPS tidak valid" });
     }
 
-    // 1. Cek apakah sudah Check-In hari ini
-    const todayAtt = await attendanceRepo.findToday(userId);
+    const todayAtt = await repo.findToday(req.user.id);
     if (!todayAtt) {
-        if (req.file.path) fs.unlinkSync(req.file.path);
-        return res.status(400).json({ message: "Anda belum melakukan Check-in hari ini." });
+      cleanupFile(req);
+      return res.status(400).json({ message: "Anda belum check-in hari ini." });
     }
     if (todayAtt.check_out_at) {
-        if (req.file.path) fs.unlinkSync(req.file.path);
-        return res.status(400).json({ message: "Anda sudah Check-out sebelumnya." });
+      cleanupFile(req);
+      return res.status(400).json({ message: "Anda sudah check-out sebelumnya." });
     }
 
-    // 2. Ambil Lokasi Kantor & Cek Radius
-    const office = await officeRepo.getByCompanyId(companyId);
+    const office = await officeRepo.getByCompanyId(req.user.company_id);
     if (!office) {
-        if (req.file.path) fs.unlinkSync(req.file.path);
-        return res.status(400).json({ message: "Lokasi kantor tidak ditemukan" });
+       cleanupFile(req);
+       return res.status(400).json({ message: "Lokasi kantor hilang." });
     }
 
-    const check = geo.checkWithOffice(office, latitude, longitude);
-    if (!check.inside) {
-      if (req.file.path) fs.unlinkSync(req.file.path);
+    const geoCheck = geo.checkWithOffice(office, lat, lng);
+    if (!geoCheck.inside) {
+      cleanupFile(req);
       return res.status(403).json({ 
-        message: `Gagal Check-out: Anda di luar kantor (${Math.round(check.distance)}m).` 
+        message: `Gagal Check-out: Posisi anda diluar kantor (${geoCheck.distance}m).` 
       });
     }
 
-    // 3. Hitung Risk Score
     const riskScore = await risk.calculate(
       req.ip,
       req.headers["user-agent"],
       req.headers["x-screen"],
-      check.distance,
+      geoCheck.distance,
       office.radius
     );
 
-    // 4. Simpan Check-out
     const photoPath = `/uploads/attendance/${req.file.filename}`;
     
-    await attendanceRepo.processCheckOut(
-      req.user,                   
-      todayAtt.id,                
-      latitude,                   
-      longitude,                  
-      req.headers["x-screen"] || "",
-      req.ip,
-      req.headers["user-agent"],
+    await repo.processCheckOut({
+      user: req.user,
+      attendanceId: todayAtt.id,
+      lat,
+      lng,
       photoPath,
-      riskScore                   
-    );
+      riskScore
+    });
 
     res.json({ success: true, message: "Check-out berhasil. Hati-hati di jalan!" });
 
   } catch (err) {
+    cleanupFile(req);
     console.error("Check-Out Error:", err);
-    if (req.file && req.file.path) fs.unlinkSync(req.file.path);
-    res.status(500).json({ message: "Terjadi kesalahan server saat check-out" });
+    res.status(500).json({ message: "Terjadi kesalahan server saat check-out." });
   }
 };
 
 exports.getMyHistory = async (userId) => {
-  if (!userId) throw new Error("USER_ID_REQUIRED");
-  return attendanceRepo.getUserHistory(userId);
+    return repo.getUserHistory(userId);
 };
-
+  
 exports.getMyAttendanceDetail = async (userId, date) => {
-  if (!userId) throw new Error("USER_ID_REQUIRED");
-  if (!date) throw new Error("DATE_REQUIRED");
-
-  return attendanceRepo.getUserAttendanceDetail(userId, date);
+    return repo.getUserAttendanceDetail(userId, date);
+};
+  
+exports.getMonthlyRecap = async (req, res) => {
+    try {
+      const { month, year } = req.query;
+      if (!month || !year) return res.status(400).json({ message: "Bulan dan Tahun wajib diisi" });
+      
+      const data = await repo.getMonthlyRecap(req.user.id, month, year);
+      res.json({ success: true, data });
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
 };
 
-exports.getMonthlyRecap = async (req, res) => {
+exports.getMyOffice = async (req, res) => {
   try {
-    const { month, year } = req.query;
-    const userId = req.user.id;
-
-    if (!month || !year) {
-      return res.status(400).json({ message: "Parameter bulan dan tahun wajib diisi" });
-    }
-
-    const history = await attendanceRepo.getMonthlyRecap(userId, month, year);
-    res.json({ success: true, data: history });
+    const office = await officeRepo.getByCompanyId(req.user.company_id);
+    if (!office) return res.status(404).json({ message: "Kantor tidak ditemukan" });
+    
+    res.json({
+      success: true,
+      data: {
+        latitude: office.latitude,
+        longitude: office.longitude,
+        radius: office.radius,
+        address: office.address
+      }
+    });
   } catch (err) {
-    console.error("Get Monthly Recap Error:", err);
-    res.status(500).json({ message: "Terjadi kesalahan server saat mengambil rekap bulanan" });
+    res.status(500).json({ message: err.message });
   }
 };

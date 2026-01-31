@@ -14,7 +14,7 @@ exports.createUser = async (req, res) => {
       name,
       email,
       password,
-      role = "intern",
+      role,
       company_id,
       phone_number,
       bio,

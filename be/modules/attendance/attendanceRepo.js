@@ -1,75 +1,55 @@
 const db = require("../../config/db");
-const geo = require("./attendanceGeo");
-const risk = require("./attendanceRisk");
 
 exports.getOffice = async (companyId) => {
   const r = await db.query(
     `SELECT * FROM office_locations WHERE company_id=$1 AND active=true`,
-    [companyId],
+    [companyId]
   );
   return r.rows[0];
 };
 
 exports.findToday = async (userId) => {
   const r = await db.query(
-    `SELECT * FROM attendances WHERE user_id=$1 AND date=CURRENT_DATE`,
-    [userId],
+    `SELECT id, check_in_at, check_out_at, status 
+     FROM attendances 
+     WHERE user_id=$1 AND date=CURRENT_DATE`,
+    [userId]
   );
   return r.rows[0];
 };
 
-exports.processCheckIn = async (
-  user,
-  office,
-  lat,
-  lng,
-  screen,
-  ip,
-  ua,
-  photoPath,
-  riskScore 
-) => {
+exports.processCheckIn = async (payload) => {
+  const { user, office, lat, lng, screen, ip, ua, photoPath, riskScore, isLate } = payload;
+  
   const client = await db.connect();
-
   try {
     await client.query("BEGIN");
-
+    let finalRisk = riskScore;
+    if (isLate) finalRisk |= 8; 
     const att = await client.query(
-      `
-      INSERT INTO attendances(
-        user_id,
-        date,
-        check_in_at,
-        ip_address,
-        user_agent,
-        screen_size,
-        risk_flag
+      `INSERT INTO attendances(
+        user_id, date, check_in_at, status, 
+        ip_address, user_agent, screen_size, risk_flag
       )
-      VALUES($1,CURRENT_DATE,NOW(),$2,$3,$4,$5)
-      RETURNING id
-      `,
-      [user.id, ip, ua, screen, riskScore], // Gunakan riskScore dari parameter
+      VALUES($1, CURRENT_DATE, NOW(), 'IN', $2, $3, $4, $5)
+      RETURNING id`,
+      [user.id, ip, ua, screen, finalRisk]
     );
 
     await client.query(
-      `
-      INSERT INTO attendance_photos(
-        attendance_id,
-        type,
-        photo_path,
-        latitude,
-        longitude
+      `INSERT INTO attendance_photos(
+        attendance_id, type, photo_path, latitude, longitude
       )
-      VALUES($1,'IN',$2,$3,$4)
-      `,
-      [att.rows[0].id, photoPath, lat, lng],
+      VALUES($1, 'IN', $2, $3, $4)`,
+      [att.rows[0].id, photoPath, lat, lng]
     );
 
     await client.query("COMMIT");
+    return att.rows[0];
   } catch (e) {
     await client.query("ROLLBACK");
     if (e.code === "23505") {
-      throw new Error("Already checked in today");
+      throw new Error("ALREADY_CHECKED_IN");
     }
     throw e;
   } finally {
@@ -77,72 +57,36 @@ exports.processCheckIn = async (
   }
 };
 
-exports.processCheckOut = async (
-  user,
-  attendanceId,
-  lat,
-  lng,
-  screen,
-  ip,
-  ua,
-  photoPath,
-  riskScore,
-) => {
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    throw new Error("INVALID_COORDINATES");
-  }
-
-  if (!attendanceId || isNaN(attendanceId)) {
-    throw new Error("INVALID_ATTENDANCE_ID");
-  }
-
-  // Validasi integer untuk riskScore
-  if (!Number.isInteger(riskScore)) {
-    throw new Error("INVALID_RISK_SCORE");
-  }
+exports.processCheckOut = async (payload) => {
+  const { user, attendanceId, lat, lng, photoPath, riskScore } = payload;
 
   const client = await db.connect();
-
   try {
     await client.query("BEGIN");
 
-    const r = await client.query(
-      `
-      SELECT id, check_out_at
-      FROM attendances
-      WHERE id = $1 AND user_id = $2
-      FOR UPDATE
-      `,
-      [attendanceId, user.id],
+    const check = await client.query(
+      `SELECT id, check_out_at FROM attendances WHERE id=$1 FOR UPDATE`,
+      [attendanceId]
     );
 
-    const att = r.rows[0];
-    if (!att) throw new Error("ATTENDANCE_NOT_FOUND");
-    if (att.check_out_at) throw new Error("ALREADY_CHECKED_OUT");
+    if (check.rowCount === 0) throw new Error("ATTENDANCE_NOT_FOUND");
+    if (check.rows[0].check_out_at) throw new Error("ALREADY_CHECKED_OUT");
 
     await client.query(
-      `
-      INSERT INTO attendance_photos(
-        attendance_id,
-        type,
-        photo_path,
-        latitude,
-        longitude
+      `UPDATE attendances
+       SET check_out_at = NOW(),
+           status = 'OUT',
+           risk_flag = risk_flag | $2
+       WHERE id = $1`,
+      [attendanceId, riskScore]
+    );
+
+    await client.query(
+      `INSERT INTO attendance_photos(
+        attendance_id, type, photo_path, latitude, longitude
       )
-      VALUES ($1,'OUT',$2,$3,$4)
-      `,
-      [attendanceId, photoPath, lat, lng],
-    );
-
-    await client.query(
-      `
-      UPDATE attendances
-      SET check_out_at = NOW(),
-          status = 'OUT',
-          risk_flag = risk_flag | $2
-      WHERE id = $1
-      `,
-      [attendanceId, riskScore],
+      VALUES ($1, 'OUT', $2, $3, $4)`,
+      [attendanceId, photoPath, lat, lng]
     );
 
     await client.query("COMMIT");
