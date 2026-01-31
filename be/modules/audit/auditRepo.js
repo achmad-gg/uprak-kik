@@ -1,3 +1,5 @@
+const db = require("../../config/db");
+
 exports.daily = async () => {
   return db
     .query(
@@ -33,8 +35,8 @@ exports.timeline = async (id) => {
   return db
     .query(
       `
-  SELECT a.date,
-         a.check_in, a.check_out,
+  SELECT
+         a.check_in_at, a.check_out_at,
          a.risk_flag,
          p.type, p.photo_path, p.latitude, p.longitude
   FROM attendances a
@@ -51,7 +53,7 @@ exports.dailyByDate = (date) => {
   return db
     .query(
       `
-  SELECT u.name, a.date, a.check_in, a.check_out, a.risk_flag
+  SELECT u.name, a.date, a.check_in_at, a.check_out_at, a.risk_flag
   FROM attendances a
   JOIN users u ON u.id = a.user_id
   WHERE a.date=$1`,
@@ -59,3 +61,23 @@ exports.dailyByDate = (date) => {
     )
     .then((r) => r.rows);
 };
+
+exports.byUser = (userId) => {
+  return db.query(
+    `
+    SELECT 
+      a.id,
+      a.action,
+      a.description,
+      a.created_at,
+      u.name AS admin_name,
+      u.email AS admin_email
+    FROM admin_audits a
+    JOIN users u ON u.id = a.admin_id
+    WHERE a.target_type = 'users'
+      AND a.target_id = $1
+    ORDER BY a.created_at DESC
+    `,
+    [userId]
+  ).then(r => r.rows)
+}

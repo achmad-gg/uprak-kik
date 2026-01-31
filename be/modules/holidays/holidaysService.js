@@ -1,6 +1,6 @@
 const repo = require("./holidaysRepo");
 
-exports.listHolidays = async (req, res) => {
+exports.listHolidays = async (_req, res) => {
   try {
     const data = await repo.getAll();
     res.json({ success: true, data });

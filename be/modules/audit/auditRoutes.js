@@ -5,6 +5,6 @@ const svc = require('./auditService');
 
 router.get('/daily', auth, role('admin'), svc.dailySummary);
 router.get('/risks', auth, role('admin'), svc.riskList);
-router.get('/user/:id', auth, role('admin'), svc.userTimeline);
+router.get('/user/:id', auth, role('admin'), svc.userAudit);
 
 module.exports = router;

@@ -28,7 +28,7 @@ exports.findAll = async (status) => {
       lr.*, 
       u.name as user_name, 
       u.email,
-      admin.name as validator_name f
+      admin.name as validator_name
     FROM leave_requests lr
     LEFT JOIN users u ON lr.user_id = u.id
     LEFT JOIN users admin ON lr.approved_by = admin.id

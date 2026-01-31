@@ -6,7 +6,7 @@ const role = require("../../middleware/roleMiddleware");
 
 router.get("/", auth, svc.listHolidays);
 
-router.post("/", auth, role("admin"), svc.addHoliday);
-router.delete("/:id", auth, role("admin"), svc.deleteHoliday);
+router.post("/create", auth, role("admin"), svc.addHoliday);
+router.delete("/:id/delete", auth, role("admin"), svc.deleteHoliday);
 
 module.exports = router;
