@@ -1,8 +1,15 @@
 const db = require('../../config/db');
 
 exports.findByEmail = async (email) => {
-  const r = await db.query(`SELECT * FROM users WHERE email=$1`, [email]);
-  return r.rows[0];
+  return db.query(
+    `SELECT 
+       u.*, 
+       c.is_active AS company_is_active 
+     FROM users u
+     LEFT JOIN companies c ON u.company_id = c.id
+     WHERE u.email = $1`,
+    [email]
+  ).then(res => res.rows[0]);
 };
 
 exports.findById = async (id) => {

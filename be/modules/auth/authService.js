@@ -8,8 +8,15 @@ exports.login = async (req, res) => {
   const { email, password } = req.body;
 
   const user = await users.findByEmail(email);
+
   if (!user) {
     return res.status(401).json({ message: 'Invalid credentials' });
+  }
+
+  if (user.company_is_active === false) {
+    return res.status(403).json({ 
+      message: 'Akses Ditolak: Perusahaan Anda telah dinonaktifkan oleh sistem. Silakan hubungi Administrator.' 
+    });
   }
 
   if (user.status === false) {
@@ -33,7 +40,7 @@ exports.login = async (req, res) => {
     { expiresIn: '12h' }
   );
 
-    res.send({
+  res.send({
     token,
     user: {
       id: user.id,

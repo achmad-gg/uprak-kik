@@ -28,10 +28,25 @@ exports.upsert = async (companyId, data) => {
       [latitude, longitude, radius || 100, address, companyId]
     );
   } else {
+    // Insert baru
     return db.query(
       `INSERT INTO office_locations (company_id, latitude, longitude, radius, address, active)
        VALUES ($1, $2, $3, $4, $5, true) RETURNING *`,
       [companyId, latitude, longitude, radius || 100, address]
     );
   }
+};
+
+exports.toggleStatus = (companyId) => {
+  return db.query(
+    `UPDATE office_locations 
+     SET active = NOT active 
+     WHERE company_id=$1 
+     RETURNING active`, 
+    [companyId]
+  );
+};
+
+exports.deleteByCompanyId = (companyId) => {
+  return db.query("DELETE FROM office_locations WHERE company_id=$1", [companyId]);
 };

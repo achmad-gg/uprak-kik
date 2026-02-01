@@ -14,7 +14,9 @@ exports.getAllCompanies = () => {
     SELECT 
       c.*, 
       CASE WHEN o.id IS NOT NULL THEN true ELSE false END as has_office,
-      o.address as office_address
+      o.address as office_address,
+      o.active as office_is_active,
+      o.radius as office_radius
     FROM companies c
     LEFT JOIN office_locations o ON o.company_id = c.id
     ORDER BY c.created_at DESC
@@ -46,6 +48,5 @@ exports.toggleStatus = (id) => {
 };
 
 exports.deleteCompany = async (id) => {
-  await db.query(`DELETE FROM office_locations WHERE company_id=$1`, [id]);
   return db.query(`DELETE FROM companies WHERE id=$1`, [id]);
 };
