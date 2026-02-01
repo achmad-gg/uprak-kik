@@ -8,5 +8,6 @@ router.get("/", auth, svc.listHolidays);
 
 router.post("/create", auth, role("admin"), svc.addHoliday);
 router.delete("/:id/delete", auth, role("admin"), svc.deleteHoliday);
+router.post("/sync", auth, role("admin"), svc.syncExternalHolidays);
 
 module.exports = router;

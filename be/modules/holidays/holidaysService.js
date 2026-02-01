@@ -1,4 +1,5 @@
 const repo = require("./holidaysRepo");
+const axios = require('axios');
 
 exports.listHolidays = async (_req, res) => {
   try {
@@ -31,5 +32,40 @@ exports.deleteHoliday = async (req, res) => {
     res.json({ success: true, message: "Hari libur dihapus" });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+exports.syncExternalHolidays = async (req, res) => {
+  try {
+    const currentYear = new Date().getFullYear();
+    const apiUrl = `https://api-harilibur.vercel.app/api?year=${currentYear}`;
+    
+    const response = await axios.get(apiUrl);
+    const externalHolidays = response.data; 
+
+    let addedCount = 0;
+
+    for (const h of externalHolidays) {
+
+      const date = h.holiday_date; 
+      const name = h.holiday_name;
+      
+      const existing = await repo.checkDate(date);
+      
+      if (!existing && h.is_national_holiday) {
+        await repo.create(date, name, 'Libur Nasional (Auto Sync)');
+        addedCount++;
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Sinkronisasi selesai. ${addedCount} hari libur baru ditambahkan.`,
+      data: { added: addedCount }
+    });
+
+  } catch (err) {
+    console.error("Sync Error:", err);
+    res.status(500).json({ message: "Gagal mengambil data dari API eksternal" });
   }
 };
