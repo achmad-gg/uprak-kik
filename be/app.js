@@ -22,7 +22,7 @@ app.use(
 app.use("/api/auth", require("./modules/auth/authRoutes"));
 app.use("/api/attendance", require("./modules/attendance/attendanceRoutes"));
 app.use("/api/audit", require("./modules/audit/auditRoutes"));
-app.use("/api/export", require("./modules/export/exportRoutes"));
+app.use("/api/export", require("./modules/attendance/attendanceExportRoute"));
 app.use("/api/admin", require("./modules/admin/adminRoutes"));
 app.use("/api/holidays", require("./modules/holidays/holidaysRoutes"));
 app.use("/api/leaves", require("./modules/leaves/leavesRoutes"));

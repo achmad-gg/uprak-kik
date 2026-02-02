@@ -3,7 +3,7 @@ const db = require("../../config/db");
 exports.getOffice = async (companyId) => {
   const r = await db.query(
     `SELECT * FROM office_locations WHERE company_id=$1 AND active=true`,
-    [companyId]
+    [companyId],
   );
   return r.rows[0];
 };
@@ -13,19 +13,30 @@ exports.findToday = async (userId) => {
     `SELECT id, check_in_at, check_out_at, status 
      FROM attendances 
      WHERE user_id=$1 AND date=CURRENT_DATE`,
-    [userId]
+    [userId],
   );
   return r.rows[0];
 };
 
 exports.processCheckIn = async (payload) => {
-  const { user, office, lat, lng, screen, ip, ua, photoPath, riskScore, isLate } = payload;
-  
+  const {
+    user,
+    office,
+    lat,
+    lng,
+    screen,
+    ip,
+    ua,
+    photoPath,
+    riskScore,
+    isLate,
+  } = payload;
+
   const client = await db.connect();
   try {
     await client.query("BEGIN");
     let finalRisk = riskScore;
-    if (isLate) finalRisk |= 8; 
+    if (isLate) finalRisk |= 8;
     const att = await client.query(
       `INSERT INTO attendances(
         user_id, date, check_in_at, status, 
@@ -33,7 +44,7 @@ exports.processCheckIn = async (payload) => {
       )
       VALUES($1, CURRENT_DATE, NOW(), 'IN', $2, $3, $4, $5)
       RETURNING id`,
-      [user.id, ip, ua, screen, finalRisk]
+      [user.id, ip, ua, screen, finalRisk],
     );
 
     await client.query(
@@ -41,7 +52,7 @@ exports.processCheckIn = async (payload) => {
         attendance_id, type, photo_path, latitude, longitude
       )
       VALUES($1, 'IN', $2, $3, $4)`,
-      [att.rows[0].id, photoPath, lat, lng]
+      [att.rows[0].id, photoPath, lat, lng],
     );
 
     await client.query("COMMIT");
@@ -66,7 +77,7 @@ exports.processCheckOut = async (payload) => {
 
     const check = await client.query(
       `SELECT id, check_out_at FROM attendances WHERE id=$1 FOR UPDATE`,
-      [attendanceId]
+      [attendanceId],
     );
 
     if (check.rowCount === 0) throw new Error("ATTENDANCE_NOT_FOUND");
@@ -78,7 +89,7 @@ exports.processCheckOut = async (payload) => {
            status = 'OUT',
            risk_flag = risk_flag | $2
        WHERE id = $1`,
-      [attendanceId, riskScore]
+      [attendanceId, riskScore],
     );
 
     await client.query(
@@ -86,7 +97,7 @@ exports.processCheckOut = async (payload) => {
         attendance_id, type, photo_path, latitude, longitude
       )
       VALUES ($1, 'OUT', $2, $3, $4)`,
-      [attendanceId, photoPath, lat, lng]
+      [attendanceId, photoPath, lat, lng],
     );
 
     await client.query("COMMIT");
@@ -141,16 +152,81 @@ exports.getUserAttendanceDetail = async (userId, date) => {
   return r.rows;
 };
 
-exports.getMonthlyRecap = async (userId, month, year) => {
-  const r = await db.query(
-    `SELECT a.date, a.check_in_at, a.check_out_at, a.status,
-            p_in.photo_path as check_in_photo, p_out.photo_path as check_out_photo
-     FROM attendances a
-     LEFT JOIN attendance_photos p_in ON a.id = p_in.attendance_id AND p_in.type = 'IN'
-     LEFT JOIN attendance_photos p_out ON a.id = p_out.attendance_id AND p_out.type = 'OUT'
-     WHERE a.user_id = $1 AND EXTRACT(MONTH FROM a.date) = $2 AND EXTRACT(YEAR FROM a.date) = $3
-     ORDER BY a.date ASC`,
-    [userId, month, year]
-  );
-  return r.rows;
+exports.exportDaily = async (date) => {
+  const sql = `
+    SELECT
+  a.id AS attendance_id,
+  to_char(a.date, 'YYYY-MM-DD') AS date,
+  a.check_in_at,
+  a.check_out_at,
+  CASE
+    WHEN a.check_in_at IS NOT NULL THEN 'present'
+    ELSE 'absent'
+  END AS status,
+  u.id AS user_id,
+  u.name,
+  u.email,
+  c.name AS company_name
+FROM attendances a
+JOIN users u ON u.id = a.user_id
+LEFT JOIN companies c ON c.id = u.company_id
+WHERE a.date = $1
+ORDER BY u.name ASC;
+
+  `;
+  const res = await db.query(sql, [date]);
+  return res.rows;
 };
+
+exports.exportMonthly = async (month) => {
+  const sql = `
+    SELECT
+      a.id AS attendance_id,
+      to_char(a.date, 'YYYY-MM-DD') AS date,
+      a.check_in_at,
+      a.check_out_at,
+      CASE
+        WHEN a.check_in_at IS NOT NULL THEN 'present'
+        ELSE 'absent'
+      END AS status,
+      u.id AS user_id,
+      u.name,
+      u.email,
+      c.name AS company_name
+    FROM attendances a
+    JOIN users u ON u.id = a.user_id
+    LEFT JOIN companies c ON c.id = u.company_id
+    WHERE a.date >= $1
+      AND a.date < ($1 + INTERVAL '1 month')
+    ORDER BY a.date ASC, u.name ASC
+  `
+
+  const startDate = `${month}-01` // ← INI KUNCI
+  return (await db.query(sql, [startDate])).rows
+}
+
+
+exports.exportRange = async (start, end) => {
+  const sql = `
+    SELECT
+      a.id AS attendance_id,
+      a.date,
+      a.check_in_at,
+      a.check_out_at,
+      CASE
+        WHEN a.check_in_at IS NOT NULL THEN 'present'
+        ELSE 'absent'
+      END AS status,
+      u.id AS user_id,
+      u.name,
+      u.email,
+      c.name AS company_name
+    FROM attendances a
+    JOIN users u ON u.id = a.user_id
+    LEFT JOIN companies c ON c.id = u.company_id
+    WHERE a.date BETWEEN $1 AND $2
+    ORDER BY a.date ASC, u.name ASC
+  `
+  return (await db.query(sql, [start, end])).rows
+}
+

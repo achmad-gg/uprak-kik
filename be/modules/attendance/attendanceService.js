@@ -20,7 +20,12 @@ const cleanupFile = (req) => {
 =========================== */
 exports.checkIn = async (req, res) => {
   try {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const dayName = today.toLocaleDateString('id-ID', { weekday: 'long' });
+    
+    console.log("Debug - Tanggal hari ini:", todayStr);
+    console.log("Debug - Nama hari:", dayName);
     
     const isHoliday = await holidaysRepo.checkDate(todayStr);
     if (isHoliday) {
@@ -67,11 +72,9 @@ exports.checkIn = async (req, res) => {
       office.radius
     );
 
-
     const currentHour = new Date().getHours();
-    const isLate = currentHour >= 9; // Anggap telat jika check-in jam 9 ke atas
+    const isLate = currentHour >= 9;
 
-    // 5. EKSEKUSI DATABASE
     const photoPath = `/uploads/attendance/${req.file.filename}`;
     
     await repo.processCheckIn({
