@@ -4,8 +4,10 @@ const rateLimit = require("./middleware/rateLimitMiddleware");
 const cors = require("cors");
 const path = require("path");
 const cookieParser = require("cookie-parser");
+const { initScheduler } = require('./modules/attendance/attendanceScheduler');
 
 const app = express();
+initScheduler();
 
 app.use(cookieParser());
 app.use(express.json());
@@ -34,5 +36,6 @@ app.use(
     maxAge: "1d",
   }),
 );
+
 
 module.exports = app;

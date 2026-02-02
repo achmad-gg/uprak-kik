@@ -26,6 +26,14 @@ exports.findById = async (id) => {
 exports.updateProfile = async (id, data) => {
   const { name, email, phone_number, bio, address, profile_picture } = data;
 
+  if (phone_number) {
+    const cleanPhone = phone_number.replace(/[-\s]/g, '');
+    if (!/^08\d{8,13}$/.test(cleanPhone)) {
+      throw new Error('Format Nomor Telepon tidak valid (Harus 08xxxxxxxxx).');
+    }
+    data.phone_number = cleanPhone; 
+  }
+
   const r = await db.query(
     `UPDATE users SET 
       name = COALESCE($1, name),

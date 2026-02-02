@@ -22,48 +22,49 @@ exports.checkIn = async (req, res) => {
   try {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
-    const dayName = today.toLocaleDateString('id-ID', { weekday: 'long' });
+
+    const activeLeave = await leavesRepo.findActiveLeave(req.user.id, todayStr);
+    if (activeLeave) {
+      // Lempar error dengan format "LEAVE:TIPE_IZIN"
+      throw new Error(`LEAVE:${activeLeave.type}`);
+    }
     
-    console.log("Debug - Tanggal hari ini:", todayStr);
-    console.log("Debug - Nama hari:", dayName);
-    
+    // 2. CEK LIBUR (HOLIDAY)
     const isHoliday = await holidaysRepo.checkDate(todayStr);
     if (isHoliday) {
-      cleanupFile(req);
-      return res.status(403).json({ 
-        message: `Absen Ditolak: Hari ini libur nasional (${isHoliday.name}).` 
-      });
+      // Lempar error dengan format "HOLIDAY:NAMA_LIBUR"
+      throw new Error(`HOLIDAY:${isHoliday.name}`);
     }
 
+    // 3. CEK STATUS CHECK-IN (ALREADY CHECK-IN)
     const existingAtt = await repo.findToday(req.user.id);
     if (existingAtt) {
-      cleanupFile(req);
-      return res.status(400).json({ message: "Anda sudah melakukan check-in hari ini." });
+      if (!existingAtt.check_out_at) { 
+        // User masih status check-in (lupa checkout)
+        throw new Error("ALREADY_CHECKIN");
+      }
+      // Jika sudah check-out (berarti absen hari ini sudah selesai)
+      throw new Error("ATTENDANCE_COMPLETED");
     }
 
-    if (!req.file) return res.status(400).json({ message: "Foto selfie wajib diupload" });
+    // --- Validasi Input Standar ---
+    if (!req.file) throw new Error("Foto selfie wajib diupload");
     
     const lat = parseFloat(req.body.latitude);
     const lng = parseFloat(req.body.longitude);
-    if (isNaN(lat) || isNaN(lng)) {
-      cleanupFile(req);
-      return res.status(400).json({ message: "Koordinat GPS tidak valid" });
-    }
+    if (isNaN(lat) || isNaN(lng)) throw new Error("Koordinat GPS tidak valid");
 
     const office = await officeRepo.getByCompanyId(req.user.company_id);
-    if (!office) {
-      cleanupFile(req);
-      return res.status(400).json({ message: "Lokasi kantor belum diatur oleh Admin" });
-    }
+    if (!office) throw new Error("Lokasi kantor belum diatur oleh Admin");
 
+    // 4. CEK RADIUS (GEOFENCING)
     const geoCheck = geo.checkWithOffice(office, lat, lng);
     if (!geoCheck.inside) {
-      cleanupFile(req);
-      return res.status(403).json({ 
-        message: `Jarak terlalu jauh (${geoCheck.distance}m). Maksimal ${office.radius}m.` 
-      });
+       // Lempar detail jarak agar frontend bisa menampilkan angka
+       throw new Error(`OUT_OF_RANGE:${geoCheck.distance}:${office.radius}`);
     }
 
+    // --- Hitung Risk & Proses Simpan ---
     const riskScore = await risk.calculate(
       req.ip,
       req.headers["user-agent"],
@@ -74,14 +75,12 @@ exports.checkIn = async (req, res) => {
 
     const currentHour = new Date().getHours();
     const isLate = currentHour >= 9;
-
     const photoPath = `/uploads/attendance/${req.file.filename}`;
     
     await repo.processCheckIn({
       user: req.user,
       office,
-      lat, 
-      lng,
+      lat, lng,
       screen: req.headers["x-screen"] || "",
       ip: req.ip,
       ua: req.headers["user-agent"],
@@ -97,11 +96,27 @@ exports.checkIn = async (req, res) => {
 
   } catch (err) {
     cleanupFile(req); 
-    console.error("Check-In Error:", err);
+    console.error("Check-In Logic Error:", err.message);
     
-    if (err.message === "ALREADY_CHECKED_IN") {
-       return res.status(400).json({ message: "Anda sudah check-in sebelumnya." });
+    const msg = err.message;
+
+    // --- LOGIC HANDLING ERROR UNTUK FRONTEND ---
+    
+    // List error yang ingin kita kirim "mentah" ke frontend untuk di-parse
+    if (
+        msg.startsWith("LEAVE:") || 
+        msg.startsWith("HOLIDAY:") || 
+        msg.startsWith("OUT_OF_RANGE:") ||
+        msg === "ALREADY_CHECKIN" ||
+        msg === "ATTENDANCE_COMPLETED"
+    ) {
+        return res.status(400).json({ message: msg });
     }
+
+    if (msg === "Foto selfie wajib diupload" || msg === "Koordinat GPS tidak valid") {
+       return res.status(400).json({ message: msg });
+    }
+
     res.status(500).json({ message: "Terjadi kesalahan server." });
   }
 };

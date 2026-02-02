@@ -110,3 +110,16 @@ exports.approveRequest = async (id, adminId) => {
     client.release();
   }
 };
+
+exports.findActiveLeave = async (userId, dateString) => {
+  const query = `
+    SELECT type, reason 
+    FROM leave_requests 
+    WHERE user_id = $1 
+      AND status = 'approved'
+      AND $2::date BETWEEN start_date AND end_date
+    LIMIT 1
+  `;
+  const result = await db.query(query, [userId, dateString]);
+  return result.rows[0];
+};

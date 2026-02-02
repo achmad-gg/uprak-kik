@@ -23,15 +23,28 @@ exports.createUser = async (req, res) => {
       profile_picture,
     } = req.body;
 
-    if (!name || !email || !password || !company_id) {
+    if (!name || !email || !password || !company_id || !phone_number) {
       return res.status(400).json({ message: "Data wajib tidak lengkap" });
     }
 
-    const exists = await db.query("SELECT 1 FROM users WHERE email=$1", [
-      email,
-    ]);
+    const phoneRegex = /^08\d{8,13}$/;
+    
+    const cleanPhone = phone_number.replace(/[-\s]/g, '');
+
+    if (!phoneRegex.test(cleanPhone)) {
+      return res.status(400).json({ 
+        message: 'Format Nomor Telepon tidak valid. Harus diawali 08 dan hanya angka (Min 10 digit).' 
+      });
+    }
+
+    const exists = await db.query("SELECT 1 FROM users WHERE email=$1", [email]);
     if (exists.rowCount > 0) {
       return res.status(409).json({ message: "Email sudah terdaftar" });
+    }
+
+    const phoneExists = await db.query("SELECT 1 FROM users WHERE phone_number=$1", [cleanPhone]);
+    if (phoneExists.rowCount > 0) {
+      return res.status(409).json({ message: "Nomor Telepon sudah digunakan user lain" });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
@@ -47,7 +60,7 @@ exports.createUser = async (req, res) => {
         password_hash,
         role,
         company_id,
-        phone_number,
+        cleanPhone, 
         bio,
         address,
         profile_picture || "/uploads/profiles/default-guest.png",
@@ -63,6 +76,7 @@ exports.createUser = async (req, res) => {
     });
 
     res.json({ success: true, message: "User berhasil dibuat" });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -435,14 +449,14 @@ exports.setOffice = async (req, res) => {
       data: result.rows[0],
     });
   } catch (err) {
-    console.error("❌ [SET OFFICE ERROR]:", err); // LOG ERROR
+    console.error("❌ [SET OFFICE ERROR]:", err); 
     res.status(500).json({ message: "Gagal simpan kantor: " + err.message });
   }
 };
 
 exports.toggleOfficeStatus = async (req, res) => {
   try {
-    const { id } = req.params; // Ini adalah company_id
+    const { id } = req.params;
     console.log(`➡️ [TOGGLE OFFICE] Company ID: ${id}`);
 
     const result = await officeRepo.toggleStatus(id);

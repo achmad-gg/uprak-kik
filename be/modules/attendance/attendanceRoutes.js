@@ -32,7 +32,17 @@ router.get("/me/:date", auth, async (req, res) => {
     res.status(500).send("Failed to get attendance detail");
   }
 });
-
+router.get('/test-wa', async (req, res) => {
+  try {
+    const result = await scheduler.runWAReminderJob();
+    res.json({ 
+      message: "Trigger WA Reminder Berhasil dijalankan!", 
+      detail: result 
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 
 module.exports = router;
